@@ -777,6 +777,16 @@
         }
 
         window.onload = initApp;
-    </script>
+    <script>
+    // SECURE KEY STORAGE
+    const apiKey = localStorage.getItem('gemini_key') || prompt("Please enter your Gemini API Key to enable AI features:");
+    if(apiKey) localStorage.setItem('gemini_key', apiKey);
+
+    // REST OF YOUR CODE STARTS HERE
+    const NWS_BASE_URL = 'https://api.weather.gov/alerts/active';
+    let map, geojsonLayer, wmsNationalLayer, wmsSatLayer;
+    // ... (the rest of your original script)
+</script>
+
 </body>
 </html>
