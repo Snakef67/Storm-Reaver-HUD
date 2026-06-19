@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Streamer HUD V12 - Final Master Edition</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; background-color: #0f172a; color: white; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; touch-action: none; }
+        ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #1e293b; } ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+        
+        #map { height: 100%; width: 100%; z-index: 1; background: #000; }
+        .drawing-mode { cursor: crosshair !important; }
+        
+        /* Sidebars */
+        .sidebar { position: fixed; top: 0; bottom: 0; height: 100%; z-index: 2000; transition: transform 0.3s ease-in-out; }
+        #sidebar-alerts { left: 0; transform: translateX(-100%); } #sidebar-alerts.open { transform: translateX(0); }
+        #sidebar-tools { right: 0; transform: translateX(100%); } #sidebar-tools.open { transform: translateX(0); }
+        @media (min-width: 768px) { .sidebar { position: relative; transform: none !important; z-index: 10; } }
+
+        /* FIXED POPUP SCROLLING FOR TABLETS */
+        #custom-popup { display: none; position: fixed; z-index: 3000; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.75); backdrop-filter: blur(10px); flex-direction: column; overflow: hidden; border: 1px solid #475569; }
+        #custom-popup.active { display: flex; }
+        @media (max-width: 767px) { #custom-popup { bottom: 0; left: 0; width: 100%; height: 85vh; border-radius: 1rem 1rem 0 0; } }
+        @media (min-width: 768px) { #custom-popup { top: 50%; left: 50%; transform: translate(-50%, -50%); width: 480px; max-height: 85vh; border-radius: 0.75rem; flex-direction: row; } }
+        
+        #popup-header { flex-shrink: 0; }
+        #popup-content-area { flex-grow: 1; overflow-y: auto; padding: 12px; } /* Single scrollable container */
+        .tab-content { display: none; }
+        .tab-content.active-tab { display: flex; flex-direction: column; }
+
+        /* Overlays */
+        #drawing-ui { display: none; position: absolute; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1500; background: rgba(15, 23, 42, 0.95); padding: 10px 20px; border-radius: 20px; border: 2px solid #ef4444; align-items: center; gap: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+        
+        /* Gemini Bot */
+        #bot-btn { position: absolute; bottom: 20px; right: 20px; z-index: 1500; cursor: pointer; transition: transform 0.2s; } #bot-btn:hover { transform: scale(1.1); }
+        #bot-chat { display: none; position: absolute; bottom: 80px; right: 20px; width: 320px; height: 400px; z-index: 1600; background: rgba(15, 23, 42, 0.95); border: 2px solid #3b82f6; border-radius: 12px; flex-direction: column; box-shadow: 0 20px 40px rgba(0,0,0,0.8); backdrop-filter: blur(10px); }
+        #bot-chat.active { display: flex; }
+
+        /* Chase Mode UI */
+        #chase-hud { display: none; position: absolute; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1500; background: rgba(15, 23, 42, 0.9); border: 2px solid #3b82f6; padding: 10px 20px; border-radius: 10px; text-align: center; }
+        #d-pad { display: none; position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1500; width: 160px; height: 160px; }
+        .d-btn { position: absolute; width: 50px; height: 50px; background: rgba(59, 130, 246, 0.8); border: 2px solid white; border-radius: 10px; color: white; font-weight: bold; display: flex; justify-content: center; align-items: center; user-select: none; cursor: pointer; font-size: 20px;}
+        .d-btn:active { background: #60a5fa; }
+        #btn-up { top: 0; left: 55px; } #btn-down { bottom: 0; left: 55px; } #btn-left { top: 55px; left: 0; } #btn-right { top: 55px; right: 0; }
+
+        .lightning-flash { animation: flash 0.3s ease-out forwards; }
+        @keyframes flash { 0% { opacity: 1; transform: scale(0.5); } 50% { opacity: 1; transform: scale(1.5); } 100% { opacity: 0; transform: scale(2); } }
+        .tornado-dot { animation: pulseTornado 1s infinite alternate; }
+        @keyframes pulseTornado { 0% { box-shadow: 0 0 0 0 rgba(100,100,100, 0.7); } 100% { box-shadow: 0 0 0 15px rgba(100,100,100, 0); } }
+
+        /* Vehicles */
+        .vehicle-mobile { background: #3b82f6; width: 18px; height: 18px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 0 10px #3b82f6; transition: transform 0.1s linear; }
+        .vehicle-deployed { background: #475569; width: 22px; height: 22px; border-radius: 4px; border: 3px solid #ef4444; box-shadow: 0 0 15px #ef4444; transition: transform 0.1s linear; }
+    </style>
+</head>
+<body class="flex flex-col md:flex-row h-screen w-full relative">
+
+    <div id="drawing-ui" class="flex flex-col md:flex-row gap-2">
+        <span class="text-xs md:text-sm font-bold text-red-400 animate-pulse whitespace-nowrap">TAP MAP TO DRAW SHAPE</span>
+        <div class="hidden md:block h-6 w-px bg-slate-600"></div>
+        <div class="flex gap-2">
+            <button onclick="finishDrawing()" class="bg-green-600 hover:bg-green-500 text-white font-bold py-1 px-3 rounded text-xs">Finish Box</button>
+            <button onclick="cancelDrawing()" class="bg-slate-600 hover:bg-slate-500 text-white font-bold py-1 px-3 rounded text-xs">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Map Toggles & Loc Button -->
+    <div class="md:hidden absolute top-4 left-4 z-[500] flex gap-2">
+        <button onclick="toggleSidebar('sidebar-alerts')" class="bg-slate-800 p-2 rounded shadow border border-slate-600 text-white"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg></button>
+    </div>
+    <div class="md:hidden absolute top-4 right-4 z-[500]">
+        <button onclick="toggleSidebar('sidebar-tools')" class="bg-blue-800 p-2 rounded shadow border border-blue-600 text-white"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"></path></svg></button>
+    </div>
+
+    <div onclick="findMyLocation()" class="absolute bottom-[90px] right-[10px] z-[500] bg-slate-800 p-2 rounded-md border border-slate-600 shadow-lg text-white hover:bg-slate-700 cursor-pointer transition" title="Find My Location">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v2m0 12v2m8-8h-2M6 12H4m12 0a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+    </div>
+
+    <!-- Chase Mode HUD & D-PAD -->
+    <div id="chase-hud">
+        <div class="text-xs font-bold text-blue-400">STORM REAVER HUD</div>
+        <div id="chase-weather" class="text-lg font-black text-white">CLEAR</div>
+        <button id="btn-deploy" onclick="toggleDeploy()" class="mt-1 bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold px-3 py-1 rounded w-full border border-red-400">DEPLOY SPIKES</button>
+    </div>
+    <div id="d-pad">
+        <div class="d-btn" id="btn-up" onmousedown="startDrive('w')" onmouseup="stopDrive()" ontouchstart="startDrive('w')" ontouchend="stopDrive()">↑</div>
+        <div class="d-btn" id="btn-down" onmousedown="startDrive('s')" onmouseup="stopDrive()" ontouchstart="startDrive('s')" ontouchend="stopDrive()">↓</div>
+        <div class="d-btn" id="btn-left" onmousedown="startDrive('a')" onmouseup="stopDrive()" ontouchstart="startDrive('a')" ontouchend="stopDrive()">←</div>
+        <div class="d-btn" id="btn-right" onmousedown="startDrive('d')" onmouseup="stopDrive()" ontouchstart="startDrive('d')" ontouchend="stopDrive()">→</div>
+    </div>
+
+    <!-- Sidebar 1: Alerts (SPLIT VIEW) -->
+    <div id="sidebar-alerts" class="sidebar w-72 md:w-80 bg-slate-900 border-r border-slate-700 flex flex-col shadow-2xl">
+        <div class="p-4 bg-slate-800 border-b border-slate-700 flex justify-between items-center shrink-0">
+            <div>
+                <h1 class="text-sm font-black uppercase tracking-wider text-slate-100 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span> Threat Center</h1>
+                <p id="alert-count" class="text-[10px] text-slate-400 mt-1 font-mono transition-colors duration-300">Syncing NWS...</p>
+            </div>
+            <button onclick="toggleSidebar('sidebar-alerts')" class="md:hidden text-slate-400 hover:text-white text-2xl">&times;</button>
+        </div>
+        <div id="sidebar-list" class="flex-1 overflow-y-auto p-2 pb-20 md:pb-2">
+            <div id="pds-section" class="mb-4 hidden">
+                <h2 class="text-[10px] font-black text-white bg-red-600/80 p-1.5 mb-2 border border-red-500 rounded text-center animate-pulse tracking-wider">🚨 PDS & EMERGENCIES</h2>
+                <div id="pds-content" class="space-y-1"></div>
+            </div>
+            <div id="normal-section">
+                <h2 class="text-[10px] font-bold text-slate-400 bg-slate-800 p-1.5 mb-2 border border-slate-600 rounded text-center tracking-wider">ACTIVE ALERTS</h2>
+                <div id="normal-content" class="space-y-1"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Map Area -->
+    <div class="flex-1 relative h-full w-full bg-black">
+        <div id="map"></div>
+
+        <!-- Custom Popup -->
+        <div id="custom-popup" class="bg-slate-800/95 flex flex-col md:flex-row overflow-hidden">
+            <div id="popup-color-bar" class="w-full h-2 md:w-3 md:h-full shrink-0 bg-orange-500"></div>
+            <div class="flex flex-col w-full h-full relative overflow-hidden">
+                
+                <!-- Fixed Header so X button never scrolls away -->
+                <div id="popup-header" class="p-3 pb-2 border-b border-slate-700 bg-slate-900/50">
+                    <button onclick="closePopup()" class="absolute top-2 right-3 text-slate-400 hover:text-white text-2xl font-bold z-50">&times;</button>
+                    <button id="btn-delete-watch" onclick="deleteCurrentWatch()" class="absolute top-2 right-12 bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded hidden border border-red-800 z-50">CANCEL</button>
+
+                    <h2 id="popup-title" class="text-lg md:text-xl font-black uppercase leading-tight mb-1 pr-12">WARNING</h2>
+                    <div class="flex items-center gap-2 mb-3">
+                        <span id="popup-badge" class="border border-current text-[10px] font-bold px-1.5 py-0.5 rounded tracking-wider">SEVERE</span>
+                        <p id="popup-expires" class="text-[11px] font-bold tracking-wider text-orange-400">EXPIRES --</p>
+                    </div>
+
+                    <!-- Flex Wrap Tabs -->
+                    <div class="flex flex-wrap gap-1">
+                        <button id="tab-btn-overview" onclick="switchTab('overview')" class="tab-btn text-[10px] font-bold uppercase px-2 py-1 rounded transition">Overview</button>
+                        <button id="tab-btn-statement" onclick="switchTab('statement')" class="tab-btn text-[10px] font-bold uppercase px-2 py-1 rounded text-slate-400 hover:bg-slate-700 transition">Statement</button>
+                        <button id="tab-btn-instructions" onclick="switchTab('instructions')" class="tab-btn text-[10px] font-bold uppercase px-2 py-1 rounded text-slate-400 hover:bg-slate-700 transition">Instructions</button>
+                        <button id="tab-btn-ai" onclick="switchTab('ai')" class="tab-btn text-[10px] font-bold uppercase px-2 py-1 rounded bg-blue-900/50 text-blue-300 border border-blue-700 hover:bg-blue-800 flex items-center gap-1">AI ✨</button>
+                    </div>
+                </div>
+
+                <!-- Scrollable Content Area -->
+                <div id="popup-content-area">
+                    <div id="tab-content-overview" class="tab-content active-tab gap-2">
+                        <div class="bg-slate-900/80 rounded border border-slate-700 flex flex-col text-xs">
+                            <div class="flex p-2 border-b border-slate-700"><div class="w-1/3 text-slate-400 font-bold uppercase">Wind</div><div class="w-2/3 font-semibold text-red-400" id="popup-wind">No Severe Wind</div></div>
+                            <div class="flex p-2 border-b border-slate-700"><div class="w-1/3 text-slate-400 font-bold uppercase">Hail</div><div class="w-2/3 font-semibold text-blue-300" id="popup-hail">No Severe Hail</div></div>
+                            <div class="flex p-2 border-b border-slate-700"><div class="w-1/3 text-slate-400 font-bold uppercase">Area</div><div class="w-2/3 font-semibold text-slate-200 text-[10px]" id="popup-counties">--</div></div>
+                            <div class="flex p-2"><div class="w-1/3 text-slate-400 font-bold uppercase">Source</div><div class="w-2/3 font-semibold italic text-slate-300 text-[10px]" id="popup-source">--</div></div>
+                        </div>
+                    </div>
+                    
+                    <div id="tab-content-statement" class="tab-content text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap font-mono p-2 bg-slate-900/50 rounded border border-slate-700"></div>
+                    <div id="tab-content-instructions" class="tab-content text-[11px] text-slate-300 leading-relaxed whitespace-pre-wrap font-mono p-2 bg-red-900/20 rounded border border-red-900/50"></div>
+                    
+                    <div id="tab-content-ai" class="tab-content gap-2">
+                        <div id="ai-output" class="text-[11px] text-slate-200 leading-relaxed bg-slate-900/80 p-2 rounded border border-blue-800/50 min-h-[80px]">
+                            <p class="text-slate-400 italic">Generate tactical briefing or EAS radio audio.</p>
+                        </div>
+                        <div class="flex gap-2 shrink-0">
+                            <button onclick="generateAISummary()" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded transition text-[10px] shadow">Tactical Brief ✨</button>
+                            <button onclick="generateEASBroadcast()" class="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded transition text-[10px] shadow">Radio EAS ✨</button>
+                        </div>
+                        <audio id="eas-audio" class="w-full hidden h-8 mt-2 rounded" controls></audio>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="bot-btn" onclick="toggleBotChat()" class="bg-blue-600 border-2 border-blue-400 rounded-full w-14 h-14 flex items-center justify-center shadow-[0_0_15px_rgba(59,130,246,0.6)]">
+            <svg class="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73A2 2 0 1 1 12 2zm-3 10a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+        </div>
+        <div id="bot-chat">
+            <div class="bg-blue-800 text-white p-3 rounded-t-lg flex justify-between items-center border-b border-blue-400">
+                <span class="font-bold flex items-center gap-2">Gemini Chase Bot</span><button onclick="toggleBotChat()" class="text-blue-200 hover:text-white font-bold">&times;</button>
+            </div>
+            <div id="chat-history" class="flex-1 p-3 overflow-y-auto flex flex-col gap-2 text-xs">
+                <div class="bg-slate-700 text-slate-100 p-2 rounded-lg self-start max-w-[85%]">Ready to intercept! Need a storm or weather info?</div>
+            </div>
+            <div class="p-2 border-t border-slate-600 flex gap-2">
+                <input type="text" id="chat-input" class="flex-1 bg-slate-900 border border-slate-600 rounded px-2 text-white text-xs" placeholder="Ask something..." onkeypress="if(event.key==='Enter') sendBotMessage()">
+                <button onclick="sendBotMessage()" class="bg-blue-600 text-white px-3 py-1 rounded text-xs font-bold">Send</button>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Sidebar 2: Tools -->
+    <div id="sidebar-tools" class="sidebar w-72 md:w-80 bg-slate-900 border-l border-slate-700 flex flex-col shadow-2xl">
+        <div class="p-4 bg-blue-900/40 border-b border-slate-700 flex justify-between items-center shrink-0">
+            <h1 class="text-sm font-black uppercase tracking-wider text-blue-300 flex items-center gap-2">Streamer Command</h1>
+            <button onclick="toggleSidebar('sidebar-tools')" class="md:hidden text-slate-400 hover:text-white text-2xl">&times;</button>
+        </div>
+        
+        <div class="flex-1 overflow-y-auto p-3 space-y-4 text-sm pb-20 md:pb-2">
+            
+            <div class="bg-slate-800 p-3 rounded border border-slate-700">
+                <h3 class="font-bold text-slate-300 mb-2 border-b border-slate-600 pb-1 text-xs uppercase text-green-400">Weather Layers</h3>
+                <label class="text-[10px] text-slate-400 font-bold uppercase">Radar Network</label>
+                <select id="national-product" onchange="updateRadarLayers()" class="w-full bg-slate-900 border border-slate-600 rounded p-1.5 text-white text-xs mb-2">
+                    <option value="none">-- Off --</option>
+                    <option value="base" selected>Base Reflectivity (N0Q)</option>
+                    <option value="comp">Composite Reflectivity (MRMS)</option>
+                </select>
+                
+                <label class="text-[10px] text-slate-400 font-bold uppercase mt-2">Live Satellite</label>
+                <select id="sat-product" onchange="updateRadarLayers()" class="w-full bg-slate-900 border border-slate-600 rounded p-1.5 text-white text-xs">
+                    <option value="none" selected>-- Off --</option>
+                    <option value="ir">GOES Band 13 (Infrared)</option>
+                </select>
+            </div>
+
+            <div class="bg-blue-900/30 p-3 rounded border border-blue-900/50">
+                <h3 class="font-bold text-blue-400 mb-2 border-b border-blue-900/50 pb-1 text-xs uppercase">Storm Chaser Mode</h3>
+                <p class="text-[10px] text-slate-400 mb-2 leading-tight">Smooth driving. Deploy spikes to hold ground.</p>
+                <button onclick="toggleChaseMode()" id="btn-chase-mode" class="w-full bg-blue-700 hover:bg-blue-600 text-white font-bold py-2 rounded shadow transition text-xs">
+                    START INTERCEPT
+                </button>
+            </div>
+            
+            <div class="bg-red-900/20 p-3 rounded border border-red-900/50">
+                <h3 class="font-bold text-red-400 mb-2 border-b border-red-900/50 pb-1 text-xs uppercase">Gemini Watches</h3>
+                <button onclick="startDrawing()" class="w-full bg-red-700 hover:bg-red-600 text-white font-bold py-2 rounded shadow transition text-xs">
+                    + Draw Custom Box
+                </button>
+            </div>
+
+            <div class="bg-slate-800 p-3 rounded border border-slate-700">
+                <h3 class="font-bold text-slate-300 mb-2 border-b border-slate-600 pb-1 text-xs uppercase text-yellow-400 flex justify-between items-center">
+                    <span>Aviation METARs</span>
+                    <button onclick="fetchMETARs()" class="bg-slate-700 hover:bg-slate-600 px-2 py-0.5 rounded text-[9px] text-white">Refresh</button>
+                </h3>
+                <div id="metar-list" class="space-y-1 max-h-32 overflow-y-auto pr-1"><p class="text-[10px] text-slate-400 italic">Fetching...</p></div>
+            </div>
+            
+            <div class="bg-slate-800 p-3 rounded border border-slate-700 flex items-center justify-between">
+                <span class="text-[10px] font-bold text-slate-300 uppercase">Auto-TTS & Auto-Fly</span>
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" id="tts-toggle" class="sr-only peer" checked>
+                  <div class="w-9 h-5 bg-slate-600 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-500"></div>
+                </label>
+            </div>
+            
+        </div>
+    </div>
+
+    <!-- Modal: Issue Watch -->
+    <div id="watch-modal" class="hidden fixed inset-0 bg-black/80 z-[4000] flex items-center justify-center p-4">
+        <div class="bg-slate-800 p-6 rounded-xl border border-red-500 w-full max-w-sm shadow-2xl">
+            <h2 class="text-xl font-bold text-white mb-4">Issue Gemini Box</h2>
+            <select id="watch-type" class="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm mb-3">
+                <option value="Tornado Watch">Tornado Watch</option>
+                <option value="PDS Tornado Watch">PDS Tornado Watch</option>
+                <option value="Severe Thunderstorm Watch">Severe Thunderstorm Watch</option>
+                <option value="PDS Severe Thunderstorm Watch">PDS Severe Thunderstorm Watch</option>
+                <option value="Flash Flood Watch">Flash Flood Watch</option>
+                <option value="Special Weather Statement">Special Weather Statement</option>
+                <option value="Red Flag Warning">Red Flag Warning</option>
+                <option value="Small Craft Advisory">Small Craft Advisory</option>
+                <option value="Special Marine Warning">Special Marine Warning</option>
+                <option value="Winter Storm Watch">Winter Storm Watch</option>
+                <option value="Hurricane Watch">Hurricane Watch</option>
+                <option value="Particularly Dangerous Situation">Tornado Emergency (PDS)</option>
+            </select>
+            <textarea id="watch-desc" class="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-xs h-20 mb-3" placeholder="Enter forecast threat description..."></textarea>
+            <div class="flex gap-2">
+                <button onclick="document.getElementById('watch-modal').classList.add('hidden')" class="flex-1 bg-slate-600 hover:bg-slate-500 text-white font-bold py-2 rounded">Cancel</button>
+                <button onclick="saveWatch()" class="flex-1 bg-red-600 hover:bg-red-500 text-white font-bold py-2 rounded">Issue</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const apiKey = ""; 
+        const NWS_BASE_URL = 'https://api.weather.gov/alerts/active'; // Plain clean URL to prevent API blocking
+        
+        let map, geojsonLayer, wmsNationalLayer, wmsSatLayer;
+        let tornadoMarkerLayer, myLocationMarker = null; 
+        let activeColor = '#FFA500', currentPopupAlertId = null, currentWarningText = '';
+        
+        let liveNwsAlerts = []; let seenAlertIds = new Set(); let isFirstLoad = true;
+        let isDrawing = false, drawPoints = [], drawPolyline = null, drawMarkers = [];
+        let streamerAlerts = [];
+        
+        // Advanced Chase Mode (Smooth Physics)
+        let isChaseMode = false;
+        let interceptorMarker = null;
+        let interceptorCoords = [42.9, -85.7]; // Default near Wyoming/GRR MI
+        let isDeployed = false;
+        let driveDir = {lat: 0, lng: 0};
+        let driveAnimation = null;
+
+        // --- THE "EVERYTHING" NWS COLOR DICTIONARY ---
+        const WARNING_COLORS = {
+            "Tornado Warning": "#FF0000", "Tornado Watch": "#FFFF00", "PDS Tornado Watch": "#FFD700",
+            "Severe Thunderstorm Warning": "#FFA500", "Severe Thunderstorm Watch": "#DB7093", "PDS Severe Thunderstorm Watch": "#FF1493",
+            "Flash Flood Warning": "#00FF00", "Flash Flood Watch": "#2E8B57", "PDS Flash Flood Watch": "#006400",
+            "Special Marine Warning": "#9932CC", "Marine Weather Statement": "#FFDAB9", "Small Craft Advisory": "#D8BFD8", "Gale Warning": "#DDA0DD",
+            "Hurricane Warning": "#DC143C", "Hurricane Watch": "#FF00FF", "Tropical Storm Warning": "#B22222", "Tropical Storm Watch": "#FF8C00",
+            "Red Flag Warning": "#FF1493", "Fire Weather Watch": "#FFDAB9",
+            "Winter Storm Warning": "#FF69B4", "Winter Storm Watch": "#4682B4", "Winter Weather Advisory": "#7B68EE",
+            "Blizzard Warning": "#FF4500", "Snow Squall Warning": "#C71585", "Ice Storm Warning": "#8B008B",
+            "High Wind Warning": "#DAA520", "High Wind Watch": "#B8860B", "Wind Advisory": "#D2B48C", "Extreme Wind Warning": "#FF8C00",
+            "Dust Storm Warning": "#FFE4C4", "Blowing Dust Warning": "#F5DEB3",
+            "Excessive Heat Warning": "#C71585", "Heat Advisory": "#FF7F50", "Freeze Warning": "#483D8B", "Frost Advisory": "#6495ED",
+            "Dense Fog Advisory": "#708090", "Avalanche Warning": "#1E90FF",
+            "Special Weather Statement": "#FFE4B5", "Particularly Dangerous Situation": "#FF00FF",
+            "Default": "#A0AEC0"
+        };
+        const PRIORITY = ["Particularly Dangerous Situation", "Tornado Warning", "Hurricane Warning", "Severe Thunderstorm Warning", "Flash Flood Warning"];
+
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        const audioCtx = new AudioContext();
+
+        function initApp() {
+            // Secretly unlock audio so Auto-TTS works without prompt
+            document.body.addEventListener('click', () => { if(audioCtx.state === 'suspended') audioCtx.resume(); }, {once:true});
+            document.body.addEventListener('touchstart', () => { if(audioCtx.state === 'suspended') audioCtx.resume(); }, {once:true});
+
+            setupSVGPatterns();
+            map = L.map('map', { zoomControl: false }).setView([42.9, -85.7], 6);
+            L.control.zoom({ position: 'bottomright' }).addTo(map);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 12 }).addTo(map);
+
+            map.createPane('satPane'); map.getPane('satPane').style.zIndex = 350;
+            map.createPane('radarPane'); map.getPane('radarPane').style.zIndex = 400;
+            map.createPane('polyPane'); map.getPane('polyPane').style.zIndex = 500;
+            map.createPane('lightningPane'); map.getPane('lightningPane').style.zIndex = 550;
+            map.createPane('chasePane'); map.getPane('chasePane').style.zIndex = 650;
+            map.createPane('markerPane'); map.getPane('markerPane').style.zIndex = 700;
+
+            tornadoMarkerLayer = L.layerGroup().addTo(map);
+
+            updateRadarLayers();
+            fetchMETARs();
+            fetchAlerts();
+            setInterval(fetchAlerts, 30000); // 30 sec reliable poll
+            setInterval(simulateLightning, 2000); 
+            
+            // Map Drawing Input
+            map.on('click', function(e) {
+                if (!isDrawing) return;
+                drawPoints.push(e.latlng);
+                let marker = L.circleMarker(e.latlng, { radius: 4, color: '#ef4444', fillColor: '#ef4444', fillOpacity: 1 }).addTo(map);
+                drawMarkers.push(marker);
+                if (drawPolyline) map.removeLayer(drawPolyline);
+                drawPolyline = L.polyline(drawPoints, { color: '#ef4444', weight: 2, dashArray: '4' }).addTo(map);
+            });
+
+            // Keyboard Driving Logic
+            document.addEventListener('keydown', (e) => {
+                if(!isChaseMode || isDeployed) return;
+                if(e.key === 'w' || e.key === 'ArrowUp') startDrive('w');
+                if(e.key === 's' || e.key === 'ArrowDown') startDrive('s');
+                if(e.key === 'a' || e.key === 'ArrowLeft') startDrive('a');
+                if(e.key === 'd' || e.key === 'ArrowRight') startDrive('d');
+            });
+            document.addEventListener('keyup', (e) => {
+                if(!isChaseMode || isDeployed) return;
+                if(['w','a','s','d','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) stopDrive();
+            });
+        }
+
+        // --- Find My Location ---
+        function findMyLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const lat = position.coords.latitude;
+                        const lng = position.coords.longitude;
+                        map.flyTo([lat, lng], 10, { duration: 1.5 });
+                        if(myLocationMarker) map.removeLayer(myLocationMarker);
+                        myLocationMarker = L.circleMarker([lat, lng], { radius: 7, fillColor: '#3b82f6', color: '#fff', weight: 2, fillOpacity: 1, pane: 'markerPane' }).addTo(map);
+                    },
+                    (error) => { alert("Could not get your location. Please check browser permissions."); }
+                );
+            } else { alert("Geolocation is not supported by this browser."); }
+        }
+
+        // --- Audio Generators ---
+        function playTone(freq, type, duration, vol=0.1) {
+            if(audioCtx.state === 'suspended') audioCtx.resume();
+            const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+            osc.type = type; osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gain.gain.setValueAtTime(vol, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+            osc.connect(gain); gain.connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + duration);
+        }
+        function playBeep() { playTone(800, 'sine', 0.2); }
+        function playAlarm() { playTone(600, 'square', 0.4, 0.2); setTimeout(() => playTone(800, 'square', 0.4, 0.2), 400); }
+
+        // --- Radar & Satellite Layers ---
+        function updateRadarLayers() {
+            if (wmsNationalLayer) map.removeLayer(wmsNationalLayer);
+            if (wmsSatLayer) map.removeLayer(wmsSatLayer);
+
+            const natProd = document.getElementById('national-product').value;
+            const satProd = document.getElementById('sat-product').value;
+
+            if(satProd === 'ir') {
+                wmsSatLayer = L.tileLayer.wms("https://mesonet.agron.iastate.edu/cgi-bin/wms/goes/conus_ir.cgi", { layers: 'goes_conus_ch13', format: 'image/png', transparent: true, opacity: 0.4, pane: 'satPane' }).addTo(map);
+            }
+            if (natProd !== 'none') {
+                const layerName = natProd === 'comp' ? 'mrms_c00' : 'nexrad-n0q-900913';
+                const sourceURL = natProd === 'comp' ? 'https://mesonet.agron.iastate.edu/cgi-bin/wms/us/mrms.cgi' : 'https://mesonet.agron.iastate.edu/cgi-bin/wms/nexrad/n0q.cgi';
+                wmsNationalLayer = L.tileLayer.wms(sourceURL, { layers: layerName, format: 'image/png', transparent: true, opacity: 0.6, pane: 'radarPane' }).addTo(map);
+            }
+        }
+
+        // --- Aviation Weather ---
+        async function fetchMETARs() {
+            const list = document.getElementById('metar-list'); list.innerHTML = '<p class="text-[10px] text-slate-400 italic">Fetching METARs...</p>';
+            const stations = ['KGRR', 'KDTW', 'KOKC', 'KORD', 'KDEN'];
+            list.innerHTML = '';
+            for(let id of stations) {
+                try {
+                    const res = await fetch(`https://api.weather.gov/stations/${id}/observations/latest`);
+                    const data = await res.json();
+                    const t = data.properties.temperature.value;
+                    const tempF = t ? Math.round((t * 9/5) + 32) : '--';
+                    const wind = data.properties.windSpeed.value ? Math.round(data.properties.windSpeed.value * 0.621371) : '--';
+                    list.innerHTML += `<div class="border-b border-slate-700 py-1 flex justify-between text-[10px]"><span class="font-bold text-slate-200">${id}</span><span class="text-slate-400">${tempF}°F | Wind: ${wind}mph</span></div>`;
+                } catch(e) { list.innerHTML += `<div class="border-b border-slate-700 py-1 text-[10px] text-slate-500">${id}: Unavailable</div>`; }
+            }
+        }
+
+        // --- CLEAN NWS DATA FETCH (Fixes the blocking bug) ---
+        async function fetchAlerts() {
+            const statusLabel = document.getElementById('alert-count');
+            statusLabel.innerText = "Syncing NWS..."; statusLabel.classList.add('text-blue-400', 'animate-pulse');
+
+            try {
+                // Completely removed headers so NWS servers do not reject the connection. Standard fetch.
+                const res = await fetch(NWS_BASE_URL);
+                const data = await res.json();
+                
+                const nwsPolys = data.features.filter(f => f.geometry && (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon'));
+                liveNwsAlerts = nwsPolys; 
+                
+                handleAutoAlerts(nwsPolys);
+                processPolygons([...streamerAlerts, ...nwsPolys]);
+                
+                statusLabel.classList.remove('text-blue-400', 'animate-pulse');
+                statusLabel.innerText = `${streamerAlerts.length + nwsPolys.length} LIVE ALERTS`;
+            } catch (err) { 
+                console.error("NWS Sync Error", err); 
+                statusLabel.innerText = "Sync Failed - Retrying soon..."; 
+                statusLabel.classList.remove('text-blue-400', 'animate-pulse');
+                statusLabel.classList.add('text-red-400');
+            }
+        }
+
+        function handleAutoAlerts(nwsPolys) {
+            let newSevere = [], newNormal = [];
+            nwsPolys.forEach(p => {
+                if(!seenAlertIds.has(p.id)) {
+                    seenAlertIds.add(p.id);
+                    if(!isFirstLoad) {
+                        const ev = p.properties.event || "";
+                        if(ev.includes("Tornado") || ev.includes("Severe Thunderstorm")) { newSevere.push(p); } else { newNormal.push(p); }
+                    }
+                }
+            });
+
+            if(!isFirstLoad && document.getElementById('tts-toggle').checked) {
+                if(newSevere.length > 0) {
+                    playAlarm();
+                    const worst = newSevere[0].properties;
+                    
+                    // TARGETED MICHIGAN ALERT LOGIC
+                    const isLocal = worst.areaDesc.includes("MI") || worst.areaDesc.includes("Michigan") || worst.areaDesc.includes("Kent");
+                    let speech = isLocal ? 
+                        `CRITICAL ALERT! A local ${worst.event} has been issued for your area in Michigan!` : 
+                        `Attention. A new ${worst.event} has been issued for ${worst.areaDesc.split(';')[0]}.`;
+                    
+                    generateEmergencyTTS(speech);
+                    const l = L.geoJSON(newSevere[0]);
+                    map.flyToBounds(l.getBounds(), { padding: [50,50], duration: 2.5 });
+                } else if(newNormal.length > 0) {
+                    playBeep();
+                }
+            }
+            isFirstLoad = false;
+        }
+
+        function processPolygons(alerts) {
+            const pdsContent = document.getElementById('pds-content'), normalContent = document.getElementById('normal-content');
+            pdsContent.innerHTML = ''; normalContent.innerHTML = '';
+            document.getElementById('pds-section').classList.add('hidden');
+
+            if (geojsonLayer) map.removeLayer(geojsonLayer);
+            tornadoMarkerLayer.clearLayers(); 
+
+            let hasPDS = false;
+            alerts.forEach(f => {
+                const p = f.properties, text = (p.description || "").toUpperCase(), ev = p.event;
+                const isPDS = text.includes("PARTICULARLY DANGEROUS") || ev.includes("Emergency") || ev.includes("PDS") || p.verified;
+                const groupColor = p.verified ? '#00ff00' : (WARNING_COLORS[ev] || WARNING_COLORS["Default"]);
+                
+                const div = document.createElement('div');
+                div.className = "p-1.5 rounded bg-slate-800/80 border border-slate-700 hover:bg-slate-700 cursor-pointer flex flex-col";
+                div.innerHTML = `<div class="flex items-center gap-1.5"><div class="w-2.5 h-2.5 rounded shrink-0 ${isPDS?'animate-pulse':''}" style="background-color: ${groupColor};"></div><span class="font-bold text-[11px] truncate text-slate-200">${p.areaDesc.split(';')[0]} - ${ev.replace(" Warning","").replace(" Watch","")}</span></div>`;
+                div.onclick = () => { openPopup(f); if(window.innerWidth < 768) toggleSidebar('sidebar-alerts'); map.fitBounds(getLayerByFeature(f).getBounds(), { padding: [50, 50], maxZoom: 9 }); };
+                
+                if(isPDS || ev.includes("Tornado Warning") || ev.includes("Hurricane Warning")) { hasPDS = true; pdsContent.appendChild(div); } else { normalContent.appendChild(div); }
+            });
+
+            if(hasPDS) document.getElementById('pds-section').classList.remove('hidden');
+
+            geojsonLayer = L.geoJSON(alerts, {
+                pane: 'polyPane',
+                style: (f) => {
+                    const ev = f.properties.event, text = (f.properties.description || "").toUpperCase();
+                    const isCustom = f.properties.senderName === "Streamer Desk";
+                    const isPDS = text.includes("PARTICULARLY DANGEROUS") || ev.includes("PDS") || f.properties.verified;
+                    const baseC = f.properties.verified ? '#00ff00' : (WARNING_COLORS[ev] || WARNING_COLORS["Default"]);
+                    return { color: baseC, weight: isPDS ? 3 : 2, dashArray: isCustom && !f.properties.verified ? '6,6' : '4,4', fillColor: isPDS ? `url(#pds-${baseC.replace('#', '')})` : baseC, fillOpacity: isPDS ? 0.8 : 0.2 };
+                },
+                onEachFeature: (f, l) => { 
+                    l.on('click', () => { openPopup(f); map.fitBounds(l.getBounds(), { padding: [50, 50], maxZoom: 9 }); }); 
+                    if(f.properties.event.includes("Tornado") && !f.properties.senderName) {
+                        try {
+                            const centroid = turf.centroid(f.geometry); const coords = centroid.geometry.coordinates;
+                            const tDot = L.divIcon({ className: 'tornado-dot', html: `<div style="background:#888; width:14px; height:14px; border-radius:50%; border:2px solid #fff;"></div>`, iconSize: [14, 14] });
+                            L.marker([coords[1], coords[0]], { icon: tDot, pane: 'chasePane' }).addTo(tornadoMarkerLayer);
+                        } catch(e){}
+                    }
+                }
+            }).addTo(map);
+        }
+
+        function getLayerByFeature(feature) { let found = null; geojsonLayer.eachLayer(l => { if (l.feature === feature) found = l; }); return found; }
+
+        function startDrawing() {
+            if(window.innerWidth < 768) toggleSidebar('sidebar-tools');
+            isDrawing = true; drawPoints = []; drawMarkers.forEach(m => map.removeLayer(m)); drawMarkers = [];
+            if(drawPolyline) map.removeLayer(drawPolyline); drawPolyline = null;
+            document.getElementById('drawing-ui').style.display = 'flex'; document.getElementById('map').classList.add('drawing-mode');
+        }
+        function cancelDrawing() {
+            isDrawing = false; document.getElementById('drawing-ui').style.display = 'none'; document.getElementById('map').classList.remove('drawing-mode');
+            drawMarkers.forEach(m => map.removeLayer(m)); drawMarkers = []; if(drawPolyline) map.removeLayer(drawPolyline);
+        }
+        function finishDrawing() {
+            if (drawPoints.length < 3) return alert("Tap at least 3 points!");
+            drawPoints.push(drawPoints[0]); if (drawPolyline) map.removeLayer(drawPolyline);
+            drawPolyline = L.polyline(drawPoints, { color: '#ef4444', weight: 3 }).addTo(map);
+            isDrawing = false; document.getElementById('drawing-ui').style.display = 'none'; document.getElementById('map').classList.remove('drawing-mode');
+            document.getElementById('watch-modal').classList.remove('hidden');
+        }
+        function saveWatch() {
+            const type = document.getElementById('watch-type').value, desc = document.getElementById('watch-desc').value, id = 'custom-' + Date.now();
+            streamerAlerts.push({ type: "Feature", id: id, properties: { event: type, description: desc, areaDesc: "Gemini Custom Zone", senderName: "Streamer Desk", verified: false, expires: new Date(Date.now() + 4*3600000).toISOString() }, geometry: { type: "Polygon", coordinates: [drawPoints.map(p => [p.lng, p.lat])] } });
+            document.getElementById('watch-modal').classList.add('hidden'); drawMarkers.forEach(m => map.removeLayer(m)); drawMarkers = []; if(drawPolyline) map.removeLayer(drawPolyline);
+            fetchAlerts();
+        }
+        function deleteCurrentWatch() { if (!currentPopupAlertId) return; streamerAlerts = streamerAlerts.filter(a => a.id !== currentPopupAlertId); closePopup(); fetchAlerts(); }
+
+        // --- Custom UI & Parsing ---
+        function openPopup(f) {
+            const p = f.properties, text = p.description || "", inst = p.instruction || "No specific instructions provided.";
+            const isPDS = text.toUpperCase().includes("PARTICULARLY DANGEROUS") || p.verified || p.event.includes("PDS");
+            const c = p.verified ? '#00ff00' : (WARNING_COLORS[p.event] || WARNING_COLORS["Default"]);
+            currentPopupAlertId = f.id; currentWarningText = text; activeColor = c;
+
+            const delBtn = document.getElementById('btn-delete-watch');
+            if (p.senderName === "Streamer Desk") { delBtn.classList.remove('hidden'); } else { delBtn.classList.add('hidden'); }
+
+            document.getElementById('popup-color-bar').style.backgroundColor = c;
+            document.getElementById('popup-title').style.color = c; document.getElementById('popup-title').innerText = p.event;
+            document.getElementById('popup-badge').style.color = c; document.getElementById('popup-badge').style.borderColor = c;
+            document.getElementById('popup-badge').innerText = isPDS ? "PDS" : "WARN";
+            document.getElementById('popup-expires').innerText = getExpirationText(p.expires);
+
+            let w = (p.parameters && p.parameters.maxWindGust) ? p.parameters.maxWindGust[0] : null;
+            if(!w) w = extractFromText(text, /WIND GUST[S]?\.\.\.\s*([0-9]+\s*MPH)/i) || extractFromText(text, /MAX WIND GUST\.\.\.\s*([0-9]+\s*MPH)/i);
+            let h = (p.parameters && p.parameters.maxHailSize) ? p.parameters.maxHailSize[0] : null;
+            if(!h) h = extractFromText(text, /HAIL[A-Z\s]*\.\.\.\s*([0-9.]+\s*IN)/i) || extractFromText(text, /MAX HAIL SIZE\.\.\.\s*([0-9.]+\s*IN)/i);
+
+            document.getElementById('popup-wind').innerText = w ? w : "No Severe Wind";
+            document.getElementById('popup-hail').innerText = h ? h : "No Severe Hail";
+            document.getElementById('popup-counties').innerText = p.areaDesc || "N/A";
+            document.getElementById('popup-source').innerText = p.senderName || "NWS";
+            
+            document.getElementById('tab-content-statement').innerText = text;
+            document.getElementById('tab-content-instructions').innerText = inst;
+            
+            switchTab('overview');
+            document.getElementById('custom-popup').classList.add('active');
+            
+            // Scroll reset logic for UI cleanliness - Safe Check
+            const sTab = document.getElementById('popup-content-area');
+            if(sTab) sTab.scrollTop = 0;
+        }
+
+        function closePopup() { document.getElementById('custom-popup').classList.remove('active'); }
+        function extractFromText(t, r) { const m = t.match(r); return m ? m[1].trim() : null; }
+        function toggleSidebar(id) { 
+            const target = document.getElementById(id);
+            if (target.classList.contains('open')) { target.classList.remove('open'); return; }
+            document.querySelectorAll('.sidebar').forEach(s => s.classList.remove('open')); target.classList.add('open'); 
+        }
+
+        function switchTab(targetTab) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active-tab'));
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.className = btn.id === 'tab-btn-ai' ? "tab-btn text-[10px] font-bold uppercase px-2 py-1 rounded bg-blue-900/50 text-blue-300 border border-blue-700 hover:bg-blue-800 flex items-center gap-1 ml-auto" : "tab-btn text-[10px] font-bold uppercase px-2 py-1 rounded text-slate-400 hover:bg-slate-700 transition";
+                btn.style.backgroundColor = ""; btn.style.color = "";
+            });
+            document.getElementById(`tab-content-${targetTab}`).classList.add('active-tab');
+            if(targetTab !== 'ai') { const activeBtn = document.getElementById(`tab-btn-${targetTab}`); activeBtn.style.backgroundColor = activeColor; activeBtn.style.color = "#000"; }
+        }
+
+        function getExpirationText(d) {
+            if(!d) return "--"; let diff = new Date(d) - new Date(); if(diff <= 0) return "EXPIRED";
+            let m = Math.floor(diff/60000); return m > 60 ? Math.floor(m/60) + "H " + (m%60) + "M" : m + " MIN";
+        }
+
+        // --- STORM REAVER CHASE MODE (Smooth Physics) ---
+        function toggleChaseMode() {
+            const btn = document.getElementById('btn-chase-mode'), hud = document.getElementById('chase-hud'), dpad = document.getElementById('d-pad');
+            isChaseMode = !isChaseMode;
+            if(isChaseMode) {
+                if(window.innerWidth < 768) toggleSidebar('sidebar-tools');
+                btn.innerText = "END INTERCEPT"; btn.classList.replace('bg-blue-700', 'bg-red-700'); btn.classList.replace('hover:bg-blue-600', 'hover:bg-red-600');
+                hud.style.display = 'block'; dpad.style.display = 'block';
+                interceptorCoords = [map.getCenter().lat, map.getCenter().lng];
+                isDeployed = false; updateDeployUI();
+                
+                const carIcon = L.divIcon({ className: 'vehicle-mobile', iconSize: [18,18] });
+                interceptorMarker = L.marker(interceptorCoords, { icon: carIcon, pane: 'chasePane' }).addTo(map);
+                map.setZoom(8); checkInterceptorWeather();
+            } else {
+                stopDrive();
+                btn.innerText = "START INTERCEPT"; btn.classList.replace('bg-red-700', 'bg-blue-700'); btn.classList.replace('hover:bg-red-600', 'hover:bg-blue-600');
+                hud.style.display = 'none'; dpad.style.display = 'none';
+                if(interceptorMarker) map.removeLayer(interceptorMarker);
+            }
+        }
+
+        function toggleDeploy() {
+            if(!isChaseMode) return;
+            isDeployed = !isDeployed;
+            stopDrive();
+            updateDeployUI();
+        }
+
+        function updateDeployUI() {
+            const btn = document.getElementById('btn-deploy');
+            if(isDeployed) {
+                btn.innerText = "UNDEPLOY"; btn.classList.replace('bg-red-600','bg-slate-600'); btn.classList.replace('hover:bg-red-500','hover:bg-slate-500');
+                if(interceptorMarker) interceptorMarker.setIcon(L.divIcon({ className: 'vehicle-deployed', iconSize: [22,22] }));
+            } else {
+                btn.innerText = "DEPLOY SPIKES"; btn.classList.replace('bg-slate-600','bg-red-600'); btn.classList.replace('hover:bg-slate-500','hover:bg-red-500');
+                if(interceptorMarker) interceptorMarker.setIcon(L.divIcon({ className: 'vehicle-mobile', iconSize: [18,18] }));
+            }
+        }
+
+        function startDrive(dir) {
+            if(!isChaseMode || isDeployed) return;
+            if(dir === 'w') driveDir = {lat: 1, lng: 0};
+            if(dir === 's') driveDir = {lat: -1, lng: 0};
+            if(dir === 'a') driveDir = {lat: 0, lng: -1}; 
+            if(dir === 'd') driveDir = {lat: 0, lng: 1};
+            
+            if(!driveAnimation) driveLoop();
+        }
+
+        function stopDrive() {
+            driveDir = {lat: 0, lng: 0};
+            if(driveAnimation) { cancelAnimationFrame(driveAnimation); driveAnimation = null; }
+        }
+
+        function driveLoop() {
+            if(!isChaseMode || isDeployed || (driveDir.lat === 0 && driveDir.lng === 0)) return;
+            
+            interceptorCoords[0] += (driveDir.lat * 0.008);
+            interceptorCoords[1] += (driveDir.lng * 0.008);
+            
+            interceptorMarker.setLatLng(interceptorCoords);
+            map.panTo(interceptorCoords, {animate: false}); 
+            
+            if(Math.random() < 0.1) checkInterceptorWeather();
+            
+            driveAnimation = requestAnimationFrame(driveLoop);
+        }
+
+        function checkInterceptorWeather() {
+            if(!geojsonLayer) return;
+            const pt = turf.point([interceptorCoords[1], interceptorCoords[0]]);
+            let cw = "CLEAR", c = "text-white";
+            geojsonLayer.eachLayer(l => {
+                try {
+                    if(turf.booleanPointInPolygon(pt, turf.polygon(l.feature.geometry.coordinates))) {
+                        const ev = l.feature.properties.event;
+                        if(ev.includes("Tornado")) { cw = "TORNADO CYCLONE"; c = "text-red-500"; }
+                        else if(ev.includes("Severe")) { cw = "HEAVY RAIN & HAIL"; c = "text-orange-500"; }
+                        else if(ev.includes("Flood")) { cw = "MODERATE RAIN"; c = "text-green-500"; }
+                        else { cw = "LIGHT RAIN"; c = "text-blue-300"; }
+                    }
+                } catch(e){}
+            });
+            const wL = document.getElementById('chase-weather'); wL.innerText = cw; wL.className = `text-lg font-black ${c}`;
+            
+            tornadoMarkerLayer.eachLayer(m => {
+                if(turf.distance(pt, turf.point([m.getLatLng().lng, m.getLatLng().lat]), {units: 'miles'}) < 3) {
+                    triggerCelebration(); wL.innerText = "INTERCEPT SUCCESSFUL!"; tornadoMarkerLayer.removeLayer(m);
+                }
+            });
+        }
+
+        function simulateLightning() {
+            if(!geojsonLayer) return;
+            const s = []; geojsonLayer.eachLayer(l => { if((l.feature.properties.event||"").includes('Severe') || (l.feature.properties.event||"").includes('Tornado')) s.push(l); });
+            if(s.length === 0) return;
+            const t = s[Math.floor(Math.random() * s.length)], b = t.getBounds();
+            const lat = b.getSouth() + Math.random() * (b.getNorth() - b.getSouth()), lng = b.getWest() + Math.random() * (b.getEast() - b.getWest());
+            const flash = L.marker([lat, lng], { icon: L.divIcon({ className: 'lightning-flash', html: `<div style="background:#fff; width:6px; height:6px; border-radius:50%; box-shadow:0 0 15px #ffff00;"></div>`, iconSize: [6,6] }), pane: 'lightningPane' }).addTo(map);
+            setTimeout(() => { if(map.hasLayer(flash)) map.removeLayer(flash); }, 300);
+        }
+
+        function triggerCelebration() {
+            var end = Date.now() + 3000;
+            (function frame() { confetti({ particleCount: 5, angle: 60, spread: 55, origin: { x: 0 }, colors: ['#0000ff', '#ffffff', '#555555'] }); confetti({ particleCount: 5, angle: 120, spread: 55, origin: { x: 1 }, colors: ['#0000ff', '#ffffff', '#555555'] }); if (Date.now() < end) requestAnimationFrame(frame); }());
+        }
+
+        function setupSVGPatterns() {
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.style.position = 'absolute'; svg.style.width = '0'; svg.style.height = '0';
+            let defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+            for (const [k, c] of Object.entries(WARNING_COLORS)) {
+                if(c === '#A0AEC0') continue;
+                defs.innerHTML += `<pattern id="pds-${c.replace('#', '')}" width="12" height="12" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="12" height="12" fill="${c}" fill-opacity="0.5"/><line x1="0" y1="0" x2="0" y2="12" stroke="#FFFFFF" stroke-width="3" stroke-opacity="0.9"/></pattern>`;
+            }
+            svg.appendChild(defs); document.body.appendChild(svg);
+        }
+
+        // --- Gemini Bot ---
+        function toggleBotChat() { document.getElementById('bot-chat').classList.toggle('active'); }
+        async function sendBotMessage() {
+            const input = document.getElementById('chat-input'), txt = input.value.trim(), history = document.getElementById('chat-history');
+            if(!txt) return;
+            history.innerHTML += `<div class="bg-blue-600 text-white p-2 rounded-lg self-end max-w-[85%]">${txt}</div>`; input.value = '';
+            let context = liveNwsAlerts.slice(0, 15).map(a => `${a.properties.event} in ${a.properties.areaDesc}`).join(" | ");
+            try {
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: `You are "Gemini Chase Bot", a tactical intercept assistant. User: "${txt}". Active NWS: ${context}. Format JSON: { "reply": "text", "flyTo": [lat, lng] or null }` }] }], generationConfig: { responseMimeType: "application/json" } }) });
+                const obj = JSON.parse((await res.json()).candidates[0].content.parts[0].text);
+                history.innerHTML += `<div class="bg-slate-700 text-slate-100 p-2 rounded-lg self-start max-w-[85%]">${obj.reply}</div>`; history.scrollTop = history.scrollHeight;
+                if(obj.flyTo && Array.isArray(obj.flyTo)) { if(window.innerWidth < 768) toggleBotChat(); map.flyTo(obj.flyTo, 8, { duration: 2 }); }
+            } catch(e) { history.innerHTML += `<div class="bg-red-900/80 text-white p-2 rounded-lg self-start max-w-[85%]">Connection issue.</div>`; }
+        }
+        async function generateAISummary() {
+            if(!currentWarningText) return;
+            const o = document.getElementById('ai-output'); o.innerHTML = `<div class="h-10 w-full ai-shimmer rounded"></div>`;
+            try {
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: "Summarize threats for: " + currentWarningText }] }] }) });
+                o.innerHTML = `<div class="font-sans text-[10px]">${(await res.json()).candidates[0].content.parts[0].text.replace(/\n/g, '<br/>')}</div>`;
+            } catch(e) { o.innerHTML = "API Error"; }
+        }
+        async function generateEASBroadcast() { if(!currentWarningText) return; generateEmergencyTTS(currentWarningText.substring(0, 200) + "... Take shelter."); }
+        async function generateEmergencyTTS(textStr) {
+            try {
+                const resTTS = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: "Say urgently: " + textStr }] }], generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Fenrir" } } } }, model: "gemini-2.5-flash-preview-tts" }) });
+                const b64 = (await resTTS.json()).candidates[0].content.parts[0].inlineData.data, binaryStr = window.atob(b64), bytes = new Uint8Array(binaryStr.length);
+                for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+                const pcm = bytes.buffer, sampleRate = 24000, byteRate = sampleRate * 2, buffer = new ArrayBuffer(44 + pcm.byteLength), view = new DataView(buffer);
+                const ws = (v, o, s) => { for(let i=0; i<s.length; i++) v.setUint8(o+i, s.charCodeAt(i)); };
+                ws(view, 0, 'RIFF'); view.setUint32(4, 36 + pcm.byteLength, true); ws(view, 8, 'WAVE'); ws(view, 12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true); view.setUint32(28, byteRate, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true); ws(view, 36, 'data'); view.setUint32(40, pcm.byteLength, true);
+                new Uint8Array(buffer, 44).set(new Uint8Array(pcm));
+                const a = new Audio(URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }))); a.play().catch(e=>console.log('Audio blocked'));
+            } catch(e) {}
+        }
+
+        window.onload = initApp;
+    </script>
+</body>
+</html>
